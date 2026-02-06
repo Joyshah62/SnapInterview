@@ -6,6 +6,7 @@ import wave
 import time
 import socket
 from s3_handler import S3Handler
+from ssl_generator import get_ssl_context
 
 def get_free_port():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -145,13 +146,15 @@ class WebSocketServer:
         if self.port is None:
             self.port = get_free_port()
 
+        ssl_context = get_ssl_context()
         self.server = await websockets.serve(
             self.handler,
             self.host,
-            self.port
+            self.port,
+            ssl=ssl_context,
         )
 
-        print(f"WebSocket server running on {self.host}:{self.port}")
+        print(f"Secure WebSocket server running on wss://{self.host}:{self.port}")
 
     
     async def stop(self):

@@ -96,7 +96,7 @@ def main():
         
         # Generate QR code
         ip = get_local_ip()
-        ws_url = f"ws://{ip}:{PORT}/test"
+        ws_url = f"wss://{ip}:{PORT}/test"
         print("QR URL:", ws_url)
         qr_img = generate_qr(ws_url)
         pixmap = QPixmap.fromImage(qr_img)
