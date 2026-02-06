@@ -1,3 +1,4 @@
 /snap
 __pycache__
 recordings
+.env
