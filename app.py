@@ -135,6 +135,8 @@ def main():
         user_data = login_user(email, password)
         if user_data:
             window.login_view.set_status("Login successful!", is_error=False)
+            # Set username in server for S3 uploads
+            server.set_current_user(user_data['username'])
             window.show_dashboard(user_data)
         else:
             window.login_view.set_status("Login failed. Please check your credentials.")
@@ -144,6 +146,8 @@ def main():
         user_data = signup_user(username, email, password)
         if user_data:
             window.login_view.set_status("Account created successfully!", is_error=False)
+            # Set username in server for S3 uploads
+            server.set_current_user(user_data['username'])
             window.show_dashboard(user_data)
         else:
             window.login_view.set_status("Signup failed. Email may already be registered.")
@@ -157,6 +161,9 @@ def main():
         # Stop server if running
         if server.server is not None:
             stop_server()
+        
+        # Clear username from server
+        server.set_current_user(None)
         
         # Clear user data and return to login
         window.dashboard_view.set_user(None)
