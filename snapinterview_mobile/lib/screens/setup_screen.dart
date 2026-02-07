@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -24,8 +25,9 @@ const List<String> difficulties = [
 
 class SetupScreen extends StatefulWidget {
   final WebSocketChannel channel;
+  final Stream stream;
   final String wsUrl;
-  const SetupScreen({super.key, required this.channel, required this.wsUrl});
+  const SetupScreen({super.key, required this.channel, required this.stream, required this.wsUrl});
 
   @override
   State<SetupScreen> createState() => _SetupScreenState();
@@ -33,6 +35,7 @@ class SetupScreen extends StatefulWidget {
 
 class _SetupScreenState extends State<SetupScreen> {
   late WebSocketChannel _channel;
+  late Stream _stream;
   String? _selectedRole;
   String? _selectedDifficulty;
   String? _resumeStatus;
@@ -42,12 +45,17 @@ class _SetupScreenState extends State<SetupScreen> {
   void initState() {
     super.initState();
     _channel = widget.channel;
+    _stream = widget.stream;
   }
 
-  Future<WebSocketChannel> _reconnect() async {
+  Future<void> _reconnect() async {
     final channel = WebSocketChannel.connect(Uri.parse(widget.wsUrl));
-    await channel.stream.first;
-    return channel;
+    final stream = channel.stream.asBroadcastStream();
+    await stream.first;
+    if (mounted) setState(() {
+      _channel = channel;
+      _stream = stream;
+    });
   }
 
   Future<void> _pickAndUpload(String docType) async {
@@ -61,9 +69,8 @@ class _SetupScreenState extends State<SetupScreen> {
     final bytes = await File(path).readAsBytes();
     final base64Content = base64Encode(bytes);
     if (!mounted) return;
-    final newChannel = await _reconnect();
+    await _reconnect();
     if (!mounted) return;
-    setState(() => _channel = newChannel);
     _channel.sink.add(jsonEncode({
       "type": "document_upload",
       "doc_type": docType,
@@ -89,7 +96,7 @@ class _SetupScreenState extends State<SetupScreen> {
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (_) => InterviewScreen(channel: _channel),
+        builder: (_) => InterviewScreen(channel: _channel, stream: _stream),
       ),
     );
   }

@@ -24,9 +24,10 @@ class _QRScreenState extends State<QRScreen> {
     if (_navigated) return;
 
     final channel = WebSocketChannel.connect(Uri.parse(wsUrl));
+    final stream = channel.stream.asBroadcastStream();
     debugPrint("Connecting to WebSocket: $wsUrl");
 
-    channel.stream.listen(
+    stream.listen(
       (event) {
         debugPrint("WebSocket received: $event");
         final data = jsonDecode(event);
@@ -36,7 +37,7 @@ class _QRScreenState extends State<QRScreen> {
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(
-              builder: (_) => SetupScreen(channel: channel, wsUrl: wsUrl),
+              builder: (_) => SetupScreen(channel: channel, stream: stream, wsUrl: wsUrl),
             ),
           );
         }

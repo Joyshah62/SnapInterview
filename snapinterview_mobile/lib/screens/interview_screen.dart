@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
@@ -7,7 +8,8 @@ import '../services/audio_service.dart';
 
 class InterviewScreen extends StatefulWidget {
   final WebSocketChannel channel;
-  const InterviewScreen({super.key, required this.channel});
+  final Stream stream;
+  const InterviewScreen({super.key, required this.channel, required this.stream});
 
   @override
   State<InterviewScreen> createState() => _InterviewScreenState();
@@ -15,19 +17,31 @@ class InterviewScreen extends StatefulWidget {
 
 class _InterviewScreenState extends State<InterviewScreen> {
   bool isRecording = false;
-  // 🔹 Transcripts
   String liveSpeech = "";
   String finalTranscript = "";
+  String interviewerTranscript = "";
+  StreamSubscription? _wsSubscription;
 
-  // 🔹 Camera
   CameraController? _cameraController;
   bool cameraReady = false;
 
   @override
   void initState() {
     super.initState();
-
-    // Small delay to let QR scanner release camera
+    _wsSubscription = widget.stream.listen((event) {
+      if (event is String) {
+        try {
+          final data = jsonDecode(event);
+          if (data["type"] == "interviewer_text" && data["text"] != null && mounted) {
+            setState(() {
+              interviewerTranscript = interviewerTranscript.isEmpty
+                  ? data["text"] as String
+                  : "$interviewerTranscript\n\n${data["text"]}";
+            });
+          }
+        } catch (_) {}
+      }
+    });
     Future.delayed(const Duration(milliseconds: 300), () {
       if (mounted) _initCamera();
     });
@@ -62,7 +76,6 @@ class _InterviewScreenState extends State<InterviewScreen> {
       widget.channel.sink.add(jsonEncode({"type": "stop_audio"}));
     }
 
-    // 🔹 NEW: Send end_interview message to stop the server
     widget.channel.sink.add(jsonEncode({"type": "end_interview"}));
 
     // Give the message time to send before closing
@@ -108,6 +121,7 @@ class _InterviewScreenState extends State<InterviewScreen> {
 
   @override
   void dispose() {
+    _wsSubscription?.cancel();
     _cameraController?.dispose();
     super.dispose();
   }
@@ -200,7 +214,6 @@ class _InterviewScreenState extends State<InterviewScreen> {
             ),
           ),
 
-          // 📝 Speech + Transcript
           Expanded(
             child: Container(
               width: double.infinity,
@@ -209,39 +222,46 @@ class _InterviewScreenState extends State<InterviewScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 🎧 Listening indicator (only when recording)
-                  if (isRecording) ...[
-                    const Text(
-                      "Listening...",
-                      style: TextStyle(fontSize: 14, color: Colors.greenAccent),
+                  if (isRecording)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        "Listening...",
+                        style: TextStyle(fontSize: 14, color: Colors.greenAccent),
+                      ),
                     ),
-                    const SizedBox(height: 8),
-                  ],
-
-                  // Live speech text
                   Text(
                     liveSpeech.isEmpty ? "…" : liveSpeech,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontStyle: FontStyle.italic,
-                    ),
+                    style: const TextStyle(fontSize: 16, fontStyle: FontStyle.italic),
                   ),
-
                   const Divider(height: 24),
-
-                  // Final transcript
+                  if (interviewerTranscript.isNotEmpty) ...[
+                    const Text(
+                      "Interviewer",
+                      style: TextStyle(fontSize: 14, color: Colors.white70),
+                    ),
+                    const SizedBox(height: 6),
+                    Expanded(
+                      flex: 1,
+                      child: SingleChildScrollView(
+                        child: Text(
+                          interviewerTranscript,
+                          style: const TextStyle(fontSize: 16),
+                        ),
+                      ),
+                    ),
+                    const Divider(height: 24),
+                  ],
                   const Text(
                     "Transcript",
                     style: TextStyle(fontSize: 14, color: Colors.white70),
                   ),
                   const SizedBox(height: 6),
-
                   Expanded(
+                    flex: 1,
                     child: SingleChildScrollView(
                       child: Text(
-                        finalTranscript.isEmpty
-                            ? "Waiting for input..."
-                            : finalTranscript,
+                        finalTranscript.isEmpty ? "Waiting for input..." : finalTranscript,
                         style: const TextStyle(fontSize: 16),
                       ),
                     ),
