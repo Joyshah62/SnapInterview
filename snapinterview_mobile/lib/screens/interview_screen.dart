@@ -68,9 +68,7 @@ class _InterviewScreenState extends State<InterviewScreen> {
             setState(() => _navigateToAnalysisWhenDone = true);
           } else if (data["type"] == "candidate_transcript" && data["text"] != null) {
             setState(() {
-              finalTranscript = finalTranscript.isEmpty
-                  ? (data["text"] as String)
-                  : "$finalTranscript ${data["text"]}";
+              finalTranscript = data["text"] as String;
             });
           }
         } catch (_) {}
