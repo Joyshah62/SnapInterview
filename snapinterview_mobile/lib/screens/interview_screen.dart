@@ -7,6 +7,14 @@ import 'package:permission_handler/permission_handler.dart';
 import '../services/audio_service.dart';
 import 'analysis_screen.dart';
 
+// Theme colors (library scope so all widgets in this file can use them)
+const _kSurfaceBg = Color(0xFF1C1C1E);
+const _kCardBg = Color(0xFF2C2C2E);
+const _kAccent = Color(0xFF0A84FF);
+const _kAccentRed = Color(0xFFFF453A);
+const _kTextPrimary = Color(0xFFFFFFFF);
+const _kTextSecondary = Color(0xFF8E8E93);
+
 class InterviewScreen extends StatefulWidget {
   final WebSocketChannel channel;
   final Stream stream;
@@ -31,7 +39,12 @@ class _InterviewScreenState extends State<InterviewScreen> {
     if (!mounted) return;
     if (_navigateToAnalysisWhenDone) {
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const AnalysisScreen()),
+        MaterialPageRoute(
+          builder: (_) => AnalysisScreen(
+            channel: widget.channel,
+            stream: widget.stream,
+          ),
+        ),
       );
     }
   }
@@ -70,9 +83,7 @@ class _InterviewScreenState extends State<InterviewScreen> {
 
   void startRecording() {
     widget.channel.sink.add(jsonEncode({"type": "start_audio"}));
-
     AudioService.startStreaming(widget.channel);
-
     setState(() {
       isRecording = true;
       finalTranscript = "";
@@ -82,38 +93,24 @@ class _InterviewScreenState extends State<InterviewScreen> {
 
   void stopRecording() {
     AudioService.stop();
-
     widget.channel.sink.add(jsonEncode({"type": "stop_audio"}));
-
-    setState(() {
-      isRecording = false;
-    });
+    setState(() => isRecording = false);
   }
 
   void endInterview() {
-    // Stop recording if active
     if (isRecording) {
       AudioService.stop();
       widget.channel.sink.add(jsonEncode({"type": "stop_audio"}));
     }
-    // Stop any playing interviewer TTS so it doesn't continue after leaving
     AudioService.stopPlayback();
-
     widget.channel.sink.add(jsonEncode({"type": "end_interview"}));
-
-    // Give the message time to send before closing
     Future.delayed(const Duration(milliseconds: 200), () {
-      // Close WebSocket connection
       widget.channel.sink.close();
-
-      // Navigate back to QR scanner screen
-      if (mounted) {
-        Navigator.of(context).pop();
-      }
+      if (mounted) Navigator.of(context).pop();
     });
   }
 
-  // ================= CAMERA =================
+  // ================= CAMERA (correct aspect ratio = no stretch / convex look) =================
   Future<void> _initCamera() async {
     try {
       final status = await Permission.camera.request();
@@ -130,7 +127,8 @@ class _InterviewScreenState extends State<InterviewScreen> {
       _cameraController = CameraController(
         camera,
         ResolutionPreset.medium,
-        enableAudio: false, // mic is handled by AudioService
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
       );
 
       await _cameraController!.initialize();
@@ -153,159 +151,237 @@ class _InterviewScreenState extends State<InterviewScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: _kSurfaceBg,
       appBar: AppBar(
-        title: const Text("Interview in Progress"),
-        automaticallyImplyLeading: false, // Remove back button
+        title: const Text("Interview", style: TextStyle(fontWeight: FontWeight.w600)),
+        backgroundColor: _kSurfaceBg,
+        elevation: 0,
+        automaticallyImplyLeading: false,
         actions: [
-          // End Interview button in app bar
           TextButton.icon(
-            icon: const Icon(Icons.exit_to_app, color: Colors.white),
-            label: const Text(
-              "End Interview",
-              style: TextStyle(color: Colors.white),
-            ),
+            icon: const Icon(Icons.close, color: _kTextSecondary, size: 20),
+            label: const Text("End", style: TextStyle(color: _kTextSecondary, fontSize: 14)),
             onPressed: () {
-              // Show confirmation dialog
               showDialog(
                 context: context,
                 builder: (ctx) => AlertDialog(
-                  title: const Text("End Interview"),
+                  backgroundColor: _kCardBg,
+                  title: const Text("End interview?", style: TextStyle(color: _kTextPrimary)),
                   content: const Text(
-                    "Are you sure you want to end this interview?",
+                    "Your progress will be saved. Are you sure?",
+                    style: TextStyle(color: _kTextSecondary),
                   ),
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.of(ctx).pop(),
-                      child: const Text("Cancel"),
+                      child: const Text("Cancel", style: TextStyle(color: _kTextSecondary)),
                     ),
                     TextButton(
                       onPressed: () {
-                        Navigator.of(ctx).pop(); // Close dialog
-                        endInterview(); // End interview
+                        Navigator.of(ctx).pop();
+                        endInterview();
                       },
-                      style: TextButton.styleFrom(
-                        foregroundColor: Colors.red,
-                      ),
-                      child: const Text("End"),
+                      child: const Text("End", style: TextStyle(color: _kAccentRed)),
                     ),
                   ],
                 ),
               );
             },
           ),
+          const SizedBox(width: 8),
         ],
       ),
-      body: Column(
-        children: [
-          const SizedBox(height: 12),
-
-          // 📷 Small camera preview (square)
-          Center(
-            child: SizedBox(
-              width: 300,
-              height: 300,
-              child: cameraReady
-                  ? ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: CameraPreview(_cameraController!),
-                    )
-                  : const Center(child: CircularProgressIndicator()),
-            ),
-          ),
-
-          const SizedBox(height: 12),
-
-          // 🎙 Controls
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.mic),
-                  label: const Text("Start"),
-                  onPressed: isRecording ? null : startRecording,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // ——— Camera preview (correct aspect ratio, no stretch) ———
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  color: _kCardBg,
+                  constraints: const BoxConstraints(maxHeight: 220),
+                  child: cameraReady && _cameraController != null
+                      ? LayoutBuilder(
+                          builder: (context, constraints) {
+                            final ar = _cameraController!.value.aspectRatio;
+                            // Use camera's native aspect ratio so the image is never stretched (fixes convex/wide face)
+                            return Center(
+                              child: AspectRatio(
+                                aspectRatio: ar,
+                                child: CameraPreview(_cameraController!),
+                              ),
+                            );
+                          },
+                        )
+                      : const SizedBox(
+                          height: 180,
+                          child: Center(child: CircularProgressIndicator(color: _kAccent)),
+                        ),
                 ),
-                const SizedBox(width: 16),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.stop),
-                  label: const Text("Stop"),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                  onPressed: isRecording ? stopRecording : null,
-                ),
-              ],
+              ),
             ),
-          ),
 
-          Expanded(
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              color: Colors.black,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            // ——— Recording controls ———
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  if (isRecording)
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 8),
-                      child: Text(
-                        "Listening...",
-                        style: TextStyle(fontSize: 14, color: Colors.greenAccent),
-                      ),
-                    ),
-                  const Divider(height: 24),
-                  const Text(
-                    "Interviewer",
-                    style: TextStyle(fontSize: 14, color: Colors.white70),
+                  _ControlButton(
+                    icon: Icons.mic,
+                    label: "Start",
+                    onPressed: isRecording ? null : startRecording,
+                    color: _kAccent,
                   ),
-                  const SizedBox(height: 6),
-                  Expanded(
-                    flex: 1,
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade900,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      alignment: Alignment.topLeft,
-                      child: SingleChildScrollView(
-                        child: Text(
-                          interviewerTranscript.isEmpty ? "—" : interviewerTranscript,
-                          style: const TextStyle(fontSize: 16),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const Divider(height: 24),
-                  const Text(
-                    "Transcript",
-                    style: TextStyle(fontSize: 14, color: Colors.white70),
-                  ),
-                  const SizedBox(height: 6),
-                  Expanded(
-                    flex: 1,
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade900,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      alignment: Alignment.topLeft,
-                      child: SingleChildScrollView(
-                        child: Text(
-                          finalTranscript.isEmpty ? "Waiting for input..." : finalTranscript,
-                          style: const TextStyle(fontSize: 16),
-                        ),
-                      ),
-                    ),
+                  const SizedBox(width: 20),
+                  _ControlButton(
+                    icon: Icons.stop_rounded,
+                    label: "Stop",
+                    onPressed: isRecording ? stopRecording : null,
+                    color: _kAccentRed,
                   ),
                 ],
               ),
             ),
+            if (isRecording)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(color: Colors.greenAccent, shape: BoxShape.circle),
+                    ),
+                    const SizedBox(width: 8),
+                    Text("Listening…", style: TextStyle(color: Colors.greenAccent.shade200, fontSize: 14)),
+                  ],
+                ),
+              ),
+
+            // ——— Transcripts ———
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const SizedBox(height: 4),
+                    _SectionLabel(label: "Interviewer"),
+                    const SizedBox(height: 6),
+                    Expanded(
+                      flex: 1,
+                      child: _TranscriptCard(
+                        text: interviewerTranscript.isEmpty ? "—" : interviewerTranscript,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _SectionLabel(label: "Your transcript"),
+                    const SizedBox(height: 6),
+                    Expanded(
+                      flex: 1,
+                      child: _TranscriptCard(
+                        text: finalTranscript.isEmpty ? "Waiting for your speech…" : finalTranscript,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SectionLabel extends StatelessWidget {
+  final String label;
+
+  const _SectionLabel({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      label,
+      style: const TextStyle(
+        fontSize: 13,
+        fontWeight: FontWeight.w600,
+        color: _kTextSecondary,
+        letterSpacing: 0.2,
+      ),
+    );
+  }
+}
+
+class _TranscriptCard extends StatelessWidget {
+  final String text;
+
+  const _TranscriptCard({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _kCardBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF3A3A3C), width: 1),
+      ),
+      child: SingleChildScrollView(
+        child: Text(
+          text,
+          style: const TextStyle(fontSize: 15, height: 1.4, color: _kTextPrimary),
+        ),
+      ),
+    );
+  }
+}
+
+class _ControlButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+  final Color color;
+
+  const _ControlButton({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onPressed != null;
+    return Material(
+      color: enabled ? color.withOpacity(0.2) : _kCardBg,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: enabled ? color : _kTextSecondary, size: 22),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: TextStyle(
+                  color: enabled ? color : _kTextSecondary,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 15,
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

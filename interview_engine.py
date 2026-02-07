@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from llama_cpp import Llama
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -61,7 +62,36 @@ def create_interview_session(role: str, difficulty: str) -> dict:
             ),
         },
     ]
-    return {"messages": messages, "question_count": 1, "max_questions": MAX_QUESTIONS}
+    session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    conversation_log = {
+        "metadata": {
+            "role": role,
+            "difficulty": difficulty,
+            "session_id": session_id,
+            "model": "Llama-3.2-3B-Instruct-GGUF",
+            "started_at": datetime.now().isoformat(),
+            "max_questions": MAX_QUESTIONS,
+        },
+        "qa_pairs": [],
+    }
+    return {
+        "messages": messages,
+        "question_count": 1,
+        "max_questions": MAX_QUESTIONS,
+        "session_id": session_id,
+        "conversation_log": conversation_log,
+        "current_question": None,
+    }
+
+
+def record_qa(session: dict, question: str, answer: str) -> None:
+    """Append one Q/A pair to the session's conversation log."""
+    session["conversation_log"]["qa_pairs"].append({
+        "question_number": session["question_count"],
+        "question": question,
+        "answer": answer,
+        "timestamp": datetime.now().isoformat(),
+    })
 
 
 def generate_question(session: dict) -> str:

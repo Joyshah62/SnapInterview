@@ -69,6 +69,16 @@ class S3Handler:
         s3_key = f"{username}/documents/{s3_filename}"
         return self._upload_to_key(local_file_path, s3_key, s3_filename)
 
+    def upload_log_file(self, local_file_path: str, username: str, session_id: str) -> dict:
+        """Upload interview log to username/logfile/interview_log_{session_id}.json"""
+        if not self.s3_client:
+            return {'success': False, 'message': 'S3 client not initialized', 'url': None, 'key': None}
+        if not os.path.exists(local_file_path):
+            return {'success': False, 'message': f'File not found: {local_file_path}', 'url': None, 'key': None}
+        s3_filename = f"interview_log_{session_id}.json"
+        s3_key = f"{username}/logfile/{s3_filename}"
+        return self._upload_to_key(local_file_path, s3_key, s3_filename)
+
     def _upload_to_key(self, local_file_path: str, s3_key: str, filename: str = None) -> dict:
         try:
             content_type = self._get_content_type(local_file_path)

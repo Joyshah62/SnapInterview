@@ -6,7 +6,10 @@ import os
 import wave
 import time
 import socket
+from datetime import datetime
+from pathlib import Path
 from s3_handler import S3Handler
+from start_evaluation import run_evaluation
 from ssl_generator import get_ssl_context
 from resume_parser import parse_and_save
 from interview_engine import (
@@ -15,6 +18,7 @@ from interview_engine import (
     get_closing,
     generate_question,
     add_response_and_generate,
+    record_qa,
 )
 from whisper_stt import transcribe_from_pcm16_bytes, transcribe_pcm16_chunk, merge_transcripts, CHUNK_BYTES, OVERLAP_BYTES
 from text_to_speech import synthesize_opening_mp3, synthesize_question_mp3, synthesize_closing_mp3
@@ -26,6 +30,23 @@ def get_free_port():
     s.close()
     print(port)
     return port
+
+
+async def _run_evaluation_and_send(websocket, local_log_path: str):
+    """Run evaluation in executor, then send evaluation_result to client."""
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(
+            None, lambda: run_evaluation(Path(local_log_path))
+        )
+        payload = {"type": "evaluation_result", "success": True, "result": result}
+    except Exception as e:
+        print(f"❌ Evaluation failed: {e}")
+        payload = {"type": "evaluation_result", "success": False, "error": str(e)}
+    try:
+        await websocket.send(json.dumps(payload))
+    except Exception:
+        pass  # Client may have disconnected
 
 class WebSocketServer:
     def __init__(self, host="0.0.0.0", port=None, on_connect=None, on_disconnect=None):
@@ -164,10 +185,9 @@ class WebSocketServer:
                                         f.write(full_text.strip())
                                     if not full_text.strip():
                                         return None, None, remainder_text
-                                    next_q = add_response_and_generate(
-                                        self.interview_sessions[session_key],
-                                        full_text.strip(),
-                                    )
+                                    sess = self.interview_sessions[session_key]
+                                    record_qa(sess, sess["current_question"], full_text.strip())
+                                    next_q = add_response_and_generate(sess, full_text.strip())
                                     return full_text.strip(), next_q, remainder_text
                                 try:
                                     transcript, next_question, remainder_text = await loop.run_in_executor(None, do_transcribe_and_next)
@@ -178,6 +198,7 @@ class WebSocketServer:
                                         }))
                                     if next_question:
                                         print(f"📥 Data fetched from LLM: {next_question!r}")
+                                        self.interview_sessions[session_key]["current_question"] = next_question
                                         await websocket.send(json.dumps({
                                             "type": "interviewer_text",
                                             "text": next_question,
@@ -216,8 +237,34 @@ class WebSocketServer:
                                             print("✅ Sent closing message (TTS)")
                                         except Exception as tts_ex:
                                             print(f"❌ TTS for closing failed: {tts_ex}")
+                                        # Save interview log locally and to S3
+                                        sess = self.interview_sessions.get(session_key)
+                                        if sess and "conversation_log" in sess:
+                                            sess["conversation_log"]["metadata"]["ended_at"] = datetime.now().isoformat()
+                                            os.makedirs("logs", exist_ok=True)
+                                            log_filename = f"interview_log_{sess['session_id']}.json"
+                                            local_log_path = os.path.join("logs", log_filename)
+                                            with open(local_log_path, "w", encoding="utf-8") as f:
+                                                json.dump(sess["conversation_log"], f, indent=2)
+                                            print(f"💾 Interview log saved locally: {local_log_path}")
+                                            if self.current_username and self.s3_handler.s3_client:
+                                                log_result = self.s3_handler.upload_log_file(
+                                                    local_file_path=local_log_path,
+                                                    username=self.current_username,
+                                                    session_id=sess["session_id"],
+                                                )
+                                                if log_result["success"]:
+                                                    print(f"☁️ Interview log uploaded to S3: {log_result['url']}")
+                                                else:
+                                                    print(f"❌ S3 log upload failed: {log_result['message']}")
+                                            else:
+                                                print("⚠️ No username or S3 config, skipping log upload")
                                         await websocket.send(json.dumps({"type": "interview_complete"}))
                                         print("✅ Interview complete (max questions reached)")
+                                        # Run evaluation in background; send result to client when done
+                                        asyncio.create_task(
+                                            _run_evaluation_and_send(websocket, local_log_path)
+                                        )
                                 except Exception as ex:
                                     print(f"Interview step error: {ex}")
                     
@@ -281,6 +328,7 @@ class WebSocketServer:
                             session = create_interview_session(role, difficulty)
                             self.interview_sessions[session_key] = session
                             opening = get_opening(role)
+                            session["current_question"] = opening
                             # Text for display (mobile can show transcript)
                             await websocket.send(json.dumps({
                                 "type": "interviewer_text",
