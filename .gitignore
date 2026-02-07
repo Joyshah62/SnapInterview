@@ -6,10 +6,8 @@ certs/
 documents/
 models/
 resume_text.md
-interview_prompt.md
 logs/
 evaluations/
-evaluator.md
 
 # Miscellaneous
 *.class
