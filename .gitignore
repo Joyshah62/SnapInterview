@@ -3,7 +3,10 @@ __pycache__
 recordings
 .env
 certs/
-
+documents/
+models/
+resume_text.md
+interview_prompt.md
 
 # Miscellaneous
 *.class

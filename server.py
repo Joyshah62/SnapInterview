@@ -15,7 +15,8 @@ from interview_engine import (
     generate_question,
     add_response_and_generate,
 )
-from whisper import transcribe_from_pcm16_bytes, transcribe_pcm16_chunk, merge_transcripts, CHUNK_BYTES, OVERLAP_BYTES
+from whisper_stt import transcribe_from_pcm16_bytes, transcribe_pcm16_chunk, merge_transcripts, CHUNK_BYTES, OVERLAP_BYTES
+from text_to_speech import synthesize_opening_mp3, synthesize_question_mp3
 
 def get_free_port():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -154,7 +155,10 @@ class WebSocketServer:
                                 loop = asyncio.get_event_loop()
                                 live_parts = list(self.live_transcript_parts)
                                 def do_transcribe_and_next():
+                                    t0 = time.perf_counter()
                                     remainder_text = transcribe_pcm16_chunk(remainder_bytes) if remainder_bytes else ""
+                                    t1 = time.perf_counter()
+                                    print(f"⏱ Transcribe remainder: {t1 - t0:.1f}s")
                                     full_text = ""
                                     for t in live_parts + ([remainder_text] if remainder_text else []):
                                         full_text = merge_transcripts(full_text, t)
@@ -166,6 +170,8 @@ class WebSocketServer:
                                         self.interview_sessions[session_key],
                                         full_text.strip(),
                                     )
+                                    t2 = time.perf_counter()
+                                    print(f"⏱ LLM generate: {t2 - t1:.1f}s | total: {t2 - t0:.1f}s")
                                     return full_text.strip(), next_q, remainder_text
                                 try:
                                     transcript, next_question, remainder_text = await loop.run_in_executor(None, do_transcribe_and_next)
@@ -175,10 +181,25 @@ class WebSocketServer:
                                             "text": remainder_text,
                                         }))
                                     if next_question:
+                                        print(f"📥 Data fetched from LLM: {next_question!r}")
                                         await websocket.send(json.dumps({
                                             "type": "interviewer_text",
                                             "text": next_question,
                                         }))
+                                        # TTS for LLM-generated question (play on mobile)
+                                        try:
+                                            loop = asyncio.get_event_loop()
+                                            mp3_bytes = await loop.run_in_executor(
+                                                None, lambda t=next_question: synthesize_question_mp3(t)
+                                            )
+                                            await websocket.send(json.dumps({
+                                                "type": "interviewer_audio",
+                                                "audio_base64": base64.b64encode(mp3_bytes).decode("ascii"),
+                                                "text": next_question,
+                                            }))
+                                            print("✅ Sent interviewer_audio for LLM question")
+                                        except Exception as tts_ex:
+                                            print(f"❌ TTS for follow-up question failed: {tts_ex}")
                                 except Exception as ex:
                                     print(f"Interview step error: {ex}")
                     
@@ -242,8 +263,19 @@ class WebSocketServer:
                             session = create_interview_session(role, difficulty)
                             self.interview_sessions[session_key] = session
                             opening = get_opening(role)
+                            # Text for display (mobile can show transcript)
                             await websocket.send(json.dumps({
                                 "type": "interviewer_text",
+                                "text": opening,
+                            }))
+                            # Audio for playback on mobile (TTS of opening)
+                            loop = asyncio.get_event_loop()
+                            mp3_bytes = await loop.run_in_executor(
+                                None, lambda: synthesize_opening_mp3(opening)
+                            )
+                            await websocket.send(json.dumps({
+                                "type": "interviewer_audio",
+                                "audio_base64": base64.b64encode(mp3_bytes).decode("ascii"),
                                 "text": opening,
                             }))
                         except Exception as ex:

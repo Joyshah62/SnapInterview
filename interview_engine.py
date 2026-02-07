@@ -11,15 +11,25 @@ def _ensure_model():
     global _llm
     if _llm is not None:
         return
-    _llm = Llama(
-        model_path=MODEL_PATH,
-        n_ctx=4096,
-        n_threads=8,
-        n_gpu_layers=0,
-        temperature=0.15,
-        repeat_penalty=1.1,
-        verbose=False,
-    )
+    # Prefer GPU for speed (n_gpu_layers=-1); fall back to CPU if no GPU.
+    for n_gpu in (-1, 0):
+        try:
+            _llm = Llama(
+                model_path=MODEL_PATH,
+                n_ctx=4096,
+                n_threads=8,
+                n_gpu_layers=n_gpu,
+                temperature=0.15,
+                repeat_penalty=1.1,
+                verbose=False,
+            )
+            print(f"✅ Llama loaded (n_gpu_layers={n_gpu})")
+            return
+        except Exception as e:
+            if n_gpu == -1:
+                print(f"⚠️ GPU load failed ({e}), falling back to CPU")
+                continue
+            raise
 
 
 def get_opening(role: str) -> str:
@@ -60,7 +70,7 @@ def generate_question(session: dict) -> str:
     messages = session["messages"].copy()
     output = _llm.create_chat_completion(
         messages=messages,
-        max_tokens=120,
+        max_tokens=80,
         temperature=0.15,
         repeat_penalty=1.1,
     )
