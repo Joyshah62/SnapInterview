@@ -8,6 +8,14 @@ import time
 import socket
 from s3_handler import S3Handler
 from ssl_generator import get_ssl_context
+from resume_parser import parse_and_save
+from interview_engine import (
+    create_interview_session,
+    get_opening,
+    generate_question,
+    add_response_and_generate,
+    transcribe_audio,
+)
 
 def get_free_port():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -27,8 +35,9 @@ class WebSocketServer:
         self.clients = set()
         self.recording = False
         self.audio_buffer = bytearray()
-        self.current_username = None  # Track current user for S3 uploads
-        self.s3_handler = S3Handler()  # Initialize S3 handler
+        self.current_username = None
+        self.s3_handler = S3Handler()
+        self.interview_sessions = {}
     
     def set_current_user(self, username: str):
         """Set the current username for organizing S3 uploads"""
@@ -86,6 +95,7 @@ class WebSocketServer:
     
     async def handler(self, websocket, path=None):
         self.clients.add(websocket)
+        session_key = id(websocket)
         print("Client connected:", path)
         
         if self.on_connect:
@@ -118,8 +128,6 @@ class WebSocketServer:
                         print("🛑 Stop recording")
                         self.recording = False
                         save_result = await self.save_audio()
-                        
-                        # Send confirmation back to client
                         if save_result:
                             response = {
                                 "type": "audio_saved",
@@ -128,6 +136,26 @@ class WebSocketServer:
                                 "success": True
                             }
                             await websocket.send(json.dumps(response))
+                            if session_key in self.interview_sessions and save_result.get("local_path"):
+                                local_path = save_result["local_path"]
+                                loop = asyncio.get_event_loop()
+                                def do_transcribe_and_next():
+                                    text = transcribe_audio(local_path)
+                                    if not text:
+                                        return None
+                                    return add_response_and_generate(
+                                        self.interview_sessions[session_key],
+                                        text,
+                                    )
+                                try:
+                                    next_question = await loop.run_in_executor(None, do_transcribe_and_next)
+                                    if next_question:
+                                        await websocket.send(json.dumps({
+                                            "type": "interviewer_text",
+                                            "text": next_question,
+                                        }))
+                                except Exception as ex:
+                                    print(f"Interview step error: {ex}")
                     
                     elif data["type"] == "document_upload":
                         doc_type = data.get("doc_type", "resume")
@@ -150,6 +178,14 @@ class WebSocketServer:
                             with open(local_path, "wb") as f:
                                 f.write(content)
                             print(f"✅ Document saved: {local_path}")
+                            if doc_type == "resume":
+                                try:
+                                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                                    resume_md = os.path.join(script_dir, "resume_text.md")
+                                    parse_and_save(local_path, resume_md)
+                                    print(f"✅ Resume parsed to resume_text.md")
+                                except Exception as parse_err:
+                                    print(f"Resume parse error: {parse_err}")
                             s3_url = None
                             if self.current_username and self.s3_handler.s3_client:
                                 s3_result = self.s3_handler.upload_document(
@@ -172,12 +208,31 @@ class WebSocketServer:
                         except Exception as doc_err:
                             print(f"Document save error: {doc_err}")
                             await websocket.send(json.dumps({"type": "document_upload_result", "success": False, "error": str(doc_err)}))
+                    elif data["type"] == "interview_setup":
+                        role = data.get("role", "Software Engineer")
+                        difficulty = str(data.get("difficulty", "Medium")).upper()
+                        if difficulty not in ("EASY", "MEDIUM", "HARD"):
+                            difficulty = "MEDIUM"
+                        try:
+                            session = create_interview_session(role, difficulty)
+                            self.interview_sessions[session_key] = session
+                            opening = get_opening(role)
+                            await websocket.send(json.dumps({
+                                "type": "interviewer_text",
+                                "text": opening,
+                            }))
+                        except Exception as ex:
+                            print(f"Interview start error: {ex}")
+                            await websocket.send(json.dumps({"type": "interviewer_text", "text": "Hi, could you briefly introduce yourself?"}))
+                    elif data["type"] == "end_interview":
+                        self.interview_sessions.pop(session_key, None)
         
         except Exception as e:
             print(f"WebSocket handler error: {type(e).__name__}: {e}")
         
         finally:
             print(">>> Handler exiting, removing client")
+            self.interview_sessions.pop(session_key, None)
             self.clients.discard(websocket)
             if self.on_disconnect:
                 self.on_disconnect()
