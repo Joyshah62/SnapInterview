@@ -4,6 +4,7 @@ from botocore.exceptions import ClientError, NoCredentialsError
 from dotenv import load_dotenv
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 # Load environment variables
 load_dotenv()
@@ -79,6 +80,16 @@ class S3Handler:
         s3_key = f"{username}/logfile/{s3_filename}"
         return self._upload_to_key(local_file_path, s3_key, s3_filename)
 
+    def upload_evaluation_file(self, local_file_path: str, username: str, session_id: str) -> dict:
+        """Upload evaluation JSON to username/evaluations/interview_log_{session_id}.evaluation.json"""
+        if not self.s3_client:
+            return {'success': False, 'message': 'S3 client not initialized', 'url': None, 'key': None}
+        if not os.path.exists(local_file_path):
+            return {'success': False, 'message': f'File not found: {local_file_path}', 'url': None, 'key': None}
+        s3_filename = f"interview_log_{session_id}.evaluation.json"
+        s3_key = f"{username}/evaluations/{s3_filename}"
+        return self._upload_to_key(local_file_path, s3_key, s3_filename)
+
     def _upload_to_key(self, local_file_path: str, s3_key: str, filename: str = None) -> dict:
         try:
             content_type = self._get_content_type(local_file_path)
@@ -117,7 +128,28 @@ class S3Handler:
         except Exception as e:
             print(f"❌ Error listing files: {e}")
             return []
-    
+
+    def get_file_content(self, s3_key: str, encoding: str = "utf-8") -> Optional[str]:
+        """
+        Download a file from S3 and return its content as a string.
+
+        Args:
+            s3_key: The S3 key of the file
+            encoding: Text encoding (default utf-8)
+
+        Returns:
+            File content as string, or None if failed
+        """
+        if not self.s3_client:
+            return None
+        try:
+            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=s3_key)
+            body = response["Body"].read()
+            return body.decode(encoding)
+        except Exception as e:
+            print(f"❌ Error getting file {s3_key}: {e}")
+            return None
+
     def delete_file(self, s3_key: str) -> bool:
         """
         Delete a file from S3

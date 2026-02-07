@@ -39,11 +39,8 @@ class _SetupScreenState extends State<SetupScreen> {
   String? _selectedRole;
   String? _selectedDifficulty;
   String? _resumeStatus;
-  String? _jdStatus;
   bool _resumeParsing = false;
-  bool _jdParsing = false;
   String? _pendingResumeName;
-  String? _pendingJdName;
   final List<String> _pendingUploadTypes = [];
   StreamSubscription? _streamSubscription;
 
@@ -86,9 +83,6 @@ class _SetupScreenState extends State<SetupScreen> {
             if (type == "resume") {
               _resumeParsing = false;
               _resumeStatus = success ? (_pendingResumeName ?? "Uploaded") : "Failed";
-            } else {
-              _jdParsing = false;
-              _jdStatus = success ? (_pendingJdName ?? "Uploaded") : "Failed";
             }
           });
         }
@@ -112,13 +106,8 @@ class _SetupScreenState extends State<SetupScreen> {
     if (mounted) {
       setState(() {
         _pendingUploadTypes.add(docType);
-        if (docType == "resume") {
-          _resumeParsing = true;
-          _pendingResumeName = name;
-        } else {
-          _jdParsing = true;
-          _pendingJdName = name;
-        }
+        _resumeParsing = true;
+        _pendingResumeName = name;
       });
     }
     _channel.sink.add(jsonEncode({
@@ -158,34 +147,21 @@ class _SetupScreenState extends State<SetupScreen> {
           children: [
             const SizedBox(height: 16),
             const Text(
-              "Resume / Job Description",
+              "Resume",
               style: TextStyle(fontSize: 16, color: Colors.white70),
             ),
             const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _resumeParsing ? null : () => _pickAndUpload("resume"),
-                    icon: const Icon(Icons.upload_file),
-                    label: Text(_resumeStatus ?? "Upload Resume"),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _jdParsing ? null : () => _pickAndUpload("jd"),
-                    icon: const Icon(Icons.upload_file),
-                    label: Text(_jdStatus ?? "Upload JD"),
-                  ),
-                ),
-              ],
-            ),
-            if (_resumeParsing || _jdParsing) ...[
-              const SizedBox(height: 12),
-              _FadingParsingText(
-                text: _resumeParsing ? "Parsing resume…" : "Parsing JD…",
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _resumeParsing ? null : () => _pickAndUpload("resume"),
+                icon: const Icon(Icons.upload_file),
+                label: Text(_resumeStatus ?? "Upload Resume"),
               ),
+            ),
+            if (_resumeParsing) ...[
+              const SizedBox(height: 12),
+              const _FadingParsingText(text: "Parsing resume…"),
             ],
             const SizedBox(height: 32),
             const Text(

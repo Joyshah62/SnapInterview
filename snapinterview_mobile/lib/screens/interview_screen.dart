@@ -64,6 +64,30 @@ class _InterviewScreenState extends State<InterviewScreen> {
               data["audio_base64"] as String,
               onPlaybackComplete: _onPlaybackComplete,
             );
+          } else if (data["type"] == "interview_error" && data["error"] != null) {
+            final msg = data["error"] as String;
+            if (mounted) {
+              showDialog(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text("Interview error"),
+                  content: Text(msg),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      child: const Text("OK"),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        Navigator.of(ctx).pop();
+                        endInterview();
+                      },
+                      child: const Text("End interview"),
+                    ),
+                  ],
+                ),
+              );
+            }
           } else if (data["type"] == "interview_complete") {
             setState(() => _navigateToAnalysisWhenDone = true);
           } else if (data["type"] == "candidate_transcript" && data["text"] != null) {

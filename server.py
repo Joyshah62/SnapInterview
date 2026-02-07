@@ -447,17 +447,18 @@
 #         print("WebSocket server stopped")
 import asyncio
 import base64
-import websockets
 import json
 import os
-import wave
-import time
+import re
 import socket
+import time
+import wave
+import websockets
 from datetime import datetime
 from pathlib import Path
 
 from s3_handler import S3Handler
-from start_evaluation import run_evaluation
+from start_evaluation import run_evaluation, EVALUATIONS_DIR
 from ssl_generator import get_ssl_context
 from resume_parser import parse_and_save
 from interview_engine import (
@@ -493,12 +494,23 @@ def get_free_port():
     return port
 
 
-async def _run_evaluation_and_send(websocket, local_log_path: str):
-    """Run interview evaluation in a thread and send the result over WebSocket."""
+async def _run_evaluation_and_send(websocket, local_log_path: str, server=None):
+    """Run evaluation, send result to client, and upload evaluation JSON to S3."""
     loop = asyncio.get_event_loop()
     try:
         result = await loop.run_in_executor(None, lambda: run_evaluation(Path(local_log_path)))
         payload = {"type": "evaluation_result", "success": True, "result": result}
+        # Upload evaluation to S3 so dashboard Summary can fetch it
+        if server and getattr(server, "current_username", None) and getattr(server, "s3_handler", None) and server.s3_handler.s3_client:
+            stem = Path(local_log_path).stem  # e.g. interview_log_20260207_082736
+            session_id = stem.replace("interview_log_", "", 1) if stem.startswith("interview_log_") else stem
+            eval_path = EVALUATIONS_DIR / f"{stem}.evaluation.json"
+            if eval_path.exists():
+                up = server.s3_handler.upload_evaluation_file(str(eval_path), server.current_username, session_id)
+                if up.get("success"):
+                    print(f"☁️ Evaluation uploaded to S3: {up.get('key', '')}")
+                else:
+                    print(f"❌ S3 evaluation upload failed: {up.get('message', '')}")
     except Exception as e:
         print(f"❌ Evaluation failed: {e}")
         payload = {"type": "evaluation_result", "success": False, "error": str(e)}
@@ -761,7 +773,7 @@ class WebSocketServer:
 
                                     # start evaluation in background
                                     if local_log_path:
-                                        asyncio.create_task(_run_evaluation_and_send(websocket, local_log_path))
+                                        asyncio.create_task(_run_evaluation_and_send(websocket, local_log_path, server=self))
 
                             except Exception as ex:
                                 print(f"Interview step error: {ex}")
@@ -852,7 +864,30 @@ class WebSocketServer:
                             }))
                         except Exception as ex:
                             print(f"Interview start error: {ex}")
-                            await websocket.send(json.dumps({"type": "interviewer_text", "text": "Hi, could you briefly introduce yourself?"}))
+                            err_str = str(ex).lower()
+                            if "quota" in err_str or "credits" in err_str or "401" in err_str:
+                                msg = (
+                                    "Voice service quota exceeded. The interview needs more ElevenLabs credits than you have. "
+                                    "Add credits in your ElevenLabs account or try again later."
+                                )
+                                if "remaining" in err_str and "required" in err_str:
+                                    try:
+                                        m = re.search(r"(\d+)\s*credits?\s*remaining", err_str, re.I)
+                                        n = re.search(r"(\d+)\s*credits?\s*(?:are\s+)?required", err_str, re.I)
+                                        if m and n:
+                                            msg = (
+                                                f"Voice quota exceeded: you have {m.group(1)} credits remaining, "
+                                                f"but this request needs {n.group(1)}. Add credits at ElevenLabs or try again later."
+                                            )
+                                    except Exception:
+                                        pass
+                            else:
+                                msg = "Could not start the interview. Please check your connection and try again."
+                            await websocket.send(json.dumps({
+                                "type": "interview_error",
+                                "error": msg,
+                                "quota_exceeded": "quota" in err_str or "credits" in err_str,
+                            }))
 
                     # ---- END INTERVIEW ----
                     elif data.get("type") == "end_interview":
