@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import websockets
 import json
 import os
@@ -127,6 +128,50 @@ class WebSocketServer:
                                 "success": True
                             }
                             await websocket.send(json.dumps(response))
+                    
+                    elif data["type"] == "document_upload":
+                        doc_type = data.get("doc_type", "resume")
+                        filename = data.get("filename", "document")
+                        content_b64 = data.get("content", "")
+                        if not content_b64:
+                            await websocket.send(json.dumps({"type": "document_upload_result", "success": False, "error": "missing content"}))
+                            continue
+                        try:
+                            content = base64.b64decode(content_b64)
+                            root = os.path.join("documents", "resumes" if doc_type == "resume" else "jds")
+                            os.makedirs(root, exist_ok=True)
+                            name_root, ext = os.path.splitext(filename)
+                            if ext.lower() not in (".pdf", ".docx"):
+                                ext = ".pdf"
+                            base_name = "".join(c for c in name_root if c.isalnum() or c in "._- ") or "document"
+                            safe_name = f"{base_name}{ext}"
+                            ts = int(time.time())
+                            local_path = os.path.join(root, f"{ts}_{safe_name}")
+                            with open(local_path, "wb") as f:
+                                f.write(content)
+                            print(f"✅ Document saved: {local_path}")
+                            s3_url = None
+                            if self.current_username and self.s3_handler.s3_client:
+                                s3_result = self.s3_handler.upload_document(
+                                    local_file_path=local_path,
+                                    username=self.current_username,
+                                    doc_type=doc_type,
+                                    timestamp=ts,
+                                )
+                                if s3_result["success"]:
+                                    s3_url = s3_result["url"]
+                                    print(f"☁️ Document uploaded to S3: {s3_url}")
+                                else:
+                                    print(f"❌ S3 document upload failed: {s3_result['message']}")
+                            await websocket.send(json.dumps({
+                                "type": "document_upload_result",
+                                "success": True,
+                                "local_path": local_path,
+                                "s3_url": s3_url,
+                            }))
+                        except Exception as doc_err:
+                            print(f"Document save error: {doc_err}")
+                            await websocket.send(json.dumps({"type": "document_upload_result", "success": False, "error": str(doc_err)}))
         
         except Exception as e:
             print(f"WebSocket handler error: {type(e).__name__}: {e}")

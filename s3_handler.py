@@ -17,11 +17,11 @@ S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
 
 class S3Handler:
     """
-    Handles file uploads to AWS S3 with username-based folder structure
+    S3 layout: bucketname/username/recordings/... and bucketname/username/documents/...
+    Internal naming unchanged: recordings use interview_timestamp.ext, documents use resume_timestamp.ext or jd_timestamp.ext.
     """
-    
+
     def __init__(self):
-        """Initialize S3 client"""
         try:
             self.s3_client = boto3.client(
                 's3',
@@ -34,162 +34,76 @@ class S3Handler:
         except Exception as e:
             print(f"❌ Failed to initialize S3 client: {e}")
             self.s3_client = None
-    
-    def upload_file(self, local_file_path: str, username: str, 
+
+    def upload_file(self, local_file_path: str, username: str,
                     custom_filename: str = None, folder: str = "recordings") -> dict:
-        """
-        Upload a file to S3 with username-based organization
-        
-        Args:
-            local_file_path: Path to the local file to upload
-            username: Username for organizing files
-            custom_filename: Optional custom filename (uses original if None)
-            folder: Subfolder type (e.g., 'recordings', 'transcripts', 'documents')
-        
-        Returns:
-            dict with 'success', 'url', 'key', and 'message'
-        """
+        """Upload to bucketname/username/{folder}/{filename}."""
         if not self.s3_client:
-            return {
-                'success': False,
-                'message': 'S3 client not initialized',
-                'url': None,
-                'key': None
-            }
-        
+            return {'success': False, 'message': 'S3 client not initialized', 'url': None, 'key': None}
         if not os.path.exists(local_file_path):
-            return {
-                'success': False,
-                'message': f'File not found: {local_file_path}',
-                'url': None,
-                'key': None
-            }
-        
-        try:
-            # Generate filename
-            if custom_filename:
-                filename = custom_filename
-            else:
-                filename = os.path.basename(local_file_path)
-            
-            # Create S3 key with username/folder/filename structure
-            s3_key = f"{username}/{folder}/{filename}"
-            
-            # Determine content type
-            content_type = self._get_content_type(local_file_path)
-            
-            # Upload file
-            self.s3_client.upload_file(
-                local_file_path,
-                self.bucket_name,
-                s3_key,
-                ExtraArgs={'ContentType': content_type}
-            )
-            
-            # Generate URL
-            file_url = f"https://{self.bucket_name}.s3.{AWS_REGION}.amazonaws.com/{s3_key}"
-            
-            print(f"✅ Uploaded: {filename} -> {s3_key}")
-            
-            return {
-                'success': True,
-                'message': 'Upload successful',
-                'url': file_url,
-                'key': s3_key,
-                'filename': filename
-            }
-        
-        except FileNotFoundError:
-            return {
-                'success': False,
-                'message': 'File not found',
-                'url': None,
-                'key': None
-            }
-        except NoCredentialsError:
-            return {
-                'success': False,
-                'message': 'AWS credentials not found',
-                'url': None,
-                'key': None
-            }
-        except ClientError as e:
-            return {
-                'success': False,
-                'message': f'AWS error: {str(e)}',
-                'url': None,
-                'key': None
-            }
-        except Exception as e:
-            return {
-                'success': False,
-                'message': f'Upload failed: {str(e)}',
-                'url': None,
-                'key': None
-            }
-    
+            return {'success': False, 'message': f'File not found: {local_file_path}', 'url': None, 'key': None}
+        filename = custom_filename or os.path.basename(local_file_path)
+        s3_key = f"{username}/{folder}/{filename}"
+        return self._upload_to_key(local_file_path, s3_key, filename)
+
     def upload_audio_recording(self, local_file_path: str, username: str) -> dict:
-        """
-        Convenience method for uploading audio recordings
-        
-        Args:
-            local_file_path: Path to the audio file
-            username: Username for organizing files
-        
-        Returns:
-            dict with upload result
-        """
-        # Generate timestamped filename
+        """Upload recording to username/recordings/interview_YYYYMMDD_HHMMSS.ext"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        extension = Path(local_file_path).suffix
-        custom_filename = f"interview_{timestamp}{extension}"
-        
+        ext = Path(local_file_path).suffix
+        custom_filename = f"interview_{timestamp}{ext}"
         return self.upload_file(
             local_file_path=local_file_path,
             username=username,
             custom_filename=custom_filename,
             folder="recordings"
         )
-    
-    def list_user_files(self, username: str, folder: str = None) -> list:
-        """
-        List all files for a specific user
-        
-        Args:
-            username: Username to search for
-            folder: Optional folder filter (e.g., 'recordings')
-        
-        Returns:
-            List of file objects with metadata
-        """
+
+    def upload_document(self, local_file_path: str, username: str, doc_type: str, timestamp: int) -> dict:
+        """Upload document to username/documents/{doc_type}_{timestamp}.ext"""
         if not self.s3_client:
-            print("❌ S3 client not initialized")
+            return {'success': False, 'message': 'S3 client not initialized', 'url': None, 'key': None}
+        if not os.path.exists(local_file_path):
+            return {'success': False, 'message': f'File not found: {local_file_path}', 'url': None, 'key': None}
+        ext = Path(local_file_path).suffix
+        s3_filename = f"{doc_type}_{timestamp}{ext}"
+        s3_key = f"{username}/documents/{s3_filename}"
+        return self._upload_to_key(local_file_path, s3_key, s3_filename)
+
+    def _upload_to_key(self, local_file_path: str, s3_key: str, filename: str = None) -> dict:
+        try:
+            content_type = self._get_content_type(local_file_path)
+            self.s3_client.upload_file(
+                local_file_path,
+                self.bucket_name,
+                s3_key,
+                ExtraArgs={'ContentType': content_type}
+            )
+            file_url = f"https://{self.bucket_name}.s3.{AWS_REGION}.amazonaws.com/{s3_key}"
+            print(f"✅ Uploaded: {filename or os.path.basename(local_file_path)} -> {s3_key}")
+            return {'success': True, 'message': 'Upload successful', 'url': file_url, 'key': s3_key, 'filename': filename or os.path.basename(s3_key)}
+        except NoCredentialsError:
+            return {'success': False, 'message': 'AWS credentials not found', 'url': None, 'key': None}
+        except ClientError as e:
+            return {'success': False, 'message': str(e), 'url': None, 'key': None}
+        except Exception as e:
+            return {'success': False, 'message': str(e), 'url': None, 'key': None}
+
+    def list_user_files(self, username: str, folder: str = None) -> list:
+        """List keys under bucketname/username/ or bucketname/username/{folder}/."""
+        if not self.s3_client:
             return []
-        
         try:
             prefix = f"{username}/"
             if folder:
                 prefix = f"{username}/{folder}/"
-            
-            response = self.s3_client.list_objects_v2(
-                Bucket=self.bucket_name,
-                Prefix=prefix
-            )
-            
+            response = self.s3_client.list_objects_v2(Bucket=self.bucket_name, Prefix=prefix)
             if 'Contents' not in response:
                 return []
-            
-            files = []
-            for obj in response['Contents']:
-                files.append({
-                    'key': obj['Key'],
-                    'size': obj['Size'],
-                    'last_modified': obj['LastModified'],
-                    'url': f"https://{self.bucket_name}.s3.{AWS_REGION}.amazonaws.com/{obj['Key']}"
-                })
-            
-            return files
-        
+            return [
+                {'key': obj['Key'], 'size': obj['Size'], 'last_modified': obj['LastModified'],
+                 'url': f"https://{self.bucket_name}.s3.{AWS_REGION}.amazonaws.com/{obj['Key']}"}
+                for obj in response['Contents']
+            ]
         except Exception as e:
             print(f"❌ Error listing files: {e}")
             return []
@@ -270,6 +184,7 @@ class S3Handler:
             '.m4a': 'audio/mp4',
             '.ogg': 'audio/ogg',
             '.pdf': 'application/pdf',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             '.txt': 'text/plain',
             '.json': 'application/json',
             '.png': 'image/png',

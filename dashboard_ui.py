@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QLineEdit, QPushButton, QVBoxLayout, 
+    QWidget, QLabel, QLineEdit, QPushButton, QVBoxLayout,
     QHBoxLayout, QStackedWidget, QFrame, QScrollArea, QSizePolicy
 )
 from PySide6.QtGui import QPixmap, QFont
@@ -340,7 +340,6 @@ class HomeView(QWidget):
         qr_layout.setContentsMargins(30, 10, 30, 30)
         qr_container.setLayout(qr_layout)
         
-        # Main layout
         layout = QVBoxLayout()
         layout.addWidget(header)
         layout.addSpacing(30)
@@ -349,7 +348,6 @@ class HomeView(QWidget):
         layout.setContentsMargins(40, 30, 40, 30)
         self.setLayout(layout)
         
-        # Connect signals
         self.start_button.clicked.connect(self.start_server_requested.emit)
         self.stop_button.clicked.connect(self.stop_server_requested.emit)
     
