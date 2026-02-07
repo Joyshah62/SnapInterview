@@ -14,8 +14,8 @@ from interview_engine import (
     get_opening,
     generate_question,
     add_response_and_generate,
-    transcribe_audio,
 )
+from whisper import transcribe_from_pcm16_bytes, transcribe_pcm16_chunk, merge_transcripts, CHUNK_BYTES, OVERLAP_BYTES
 
 def get_free_port():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -35,6 +35,7 @@ class WebSocketServer:
         self.clients = set()
         self.recording = False
         self.audio_buffer = bytearray()
+        self.live_transcript_parts = []
         self.current_username = None
         self.s3_handler = S3Handler()
         self.interview_sessions = {}
@@ -114,7 +115,17 @@ class WebSocketServer:
                 if isinstance(message, bytes):
                     if self.recording:
                         self.audio_buffer.extend(message)
-                        print(f"Recording chunk: {len(message)} bytes")
+                        while len(self.audio_buffer) >= CHUNK_BYTES:
+                            chunk = bytes(self.audio_buffer[:CHUNK_BYTES])
+                            del self.audio_buffer[:CHUNK_BYTES - OVERLAP_BYTES]
+                            ws = websocket
+                            async def process_live_chunk(chunk_bytes=chunk):
+                                loop = asyncio.get_event_loop()
+                                text = await loop.run_in_executor(None, lambda cb=chunk_bytes: transcribe_pcm16_chunk(cb))
+                                if text:
+                                    self.live_transcript_parts.append(text)
+                                    await ws.send(json.dumps({"type": "candidate_transcript", "text": text}))
+                            asyncio.create_task(process_live_chunk())
                 
                 elif isinstance(message, str):
                     data = json.loads(message)
@@ -123,6 +134,7 @@ class WebSocketServer:
                         print("🎙️ Start recording")
                         self.recording = True
                         self.audio_buffer = bytearray()
+                        self.live_transcript_parts = []
                     
                     elif data["type"] == "stop_audio":
                         print("🛑 Stop recording")
@@ -136,19 +148,32 @@ class WebSocketServer:
                                 "success": True
                             }
                             await websocket.send(json.dumps(response))
-                            if session_key in self.interview_sessions and save_result.get("local_path"):
-                                local_path = save_result["local_path"]
+                            if session_key in self.interview_sessions:
+                                remainder_bytes = bytes(self.audio_buffer)
+                                output_txt = os.path.join("recordings", f"transcript_{int(time.time())}.txt")
                                 loop = asyncio.get_event_loop()
+                                live_parts = list(self.live_transcript_parts)
                                 def do_transcribe_and_next():
-                                    text = transcribe_audio(local_path)
-                                    if not text:
-                                        return None
-                                    return add_response_and_generate(
+                                    remainder_text = transcribe_pcm16_chunk(remainder_bytes) if remainder_bytes else ""
+                                    full_text = ""
+                                    for t in live_parts + ([remainder_text] if remainder_text else []):
+                                        full_text = merge_transcripts(full_text, t)
+                                    with open(output_txt, "w", encoding="utf-8") as f:
+                                        f.write(full_text.strip())
+                                    if not full_text.strip():
+                                        return None, None, remainder_text
+                                    next_q = add_response_and_generate(
                                         self.interview_sessions[session_key],
-                                        text,
+                                        full_text.strip(),
                                     )
+                                    return full_text.strip(), next_q, remainder_text
                                 try:
-                                    next_question = await loop.run_in_executor(None, do_transcribe_and_next)
+                                    transcript, next_question, remainder_text = await loop.run_in_executor(None, do_transcribe_and_next)
+                                    if remainder_text:
+                                        await websocket.send(json.dumps({
+                                            "type": "candidate_transcript",
+                                            "text": remainder_text,
+                                        }))
                                     if next_question:
                                         await websocket.send(json.dumps({
                                             "type": "interviewer_text",

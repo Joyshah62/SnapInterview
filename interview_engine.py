@@ -2,7 +2,7 @@ import os
 from llama_cpp import Llama
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(SCRIPT_DIR, "models", "model.gguf")
+MODEL_PATH = os.path.join(SCRIPT_DIR, "models", "Llama-3.2-3B-Instruct-Q4_K_M.gguf")
 
 _llm = None
 
