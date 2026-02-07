@@ -32,11 +32,18 @@ class _InterviewScreenState extends State<InterviewScreen> {
       if (event is String) {
         try {
           final data = jsonDecode(event);
-          if (data["type"] == "interviewer_text" && data["text"] != null && mounted) {
+          if (!mounted) return;
+          if (data["type"] == "interviewer_text" && data["text"] != null) {
             setState(() {
               interviewerTranscript = interviewerTranscript.isEmpty
                   ? data["text"] as String
                   : "$interviewerTranscript\n\n${data["text"]}";
+            });
+          } else if (data["type"] == "candidate_transcript" && data["text"] != null) {
+            setState(() {
+              finalTranscript = finalTranscript.isEmpty
+                  ? data["text"] as String
+                  : "$finalTranscript ${data["text"]}";
             });
           }
         } catch (_) {}
