@@ -118,6 +118,18 @@ def synthesize_question_mp3(text: str) -> bytes:
     )
 
 
+def synthesize_closing_mp3(text: str) -> bytes:
+    """
+    Synthesize closing/thank-you text to MP3 bytes (heard on mobile when interview ends).
+    """
+    return synthesize_mp3(
+        text,
+        role="primary",
+        question_type=QuestionType.CLOSING,
+        confidence=0.7,
+    )
+
+
 # =========================================================
 # DEMO (FILE WRITE ONLY)
 # =========================================================

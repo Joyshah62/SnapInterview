@@ -4,6 +4,9 @@ from llama_cpp import Llama
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(SCRIPT_DIR, "models", "Llama-3.2-3B-Instruct-Q4_K_M.gguf")
 
+# Interview length: 5 questions total (opening + 4 follow-ups), then interview complete
+MAX_QUESTIONS = 5
+
 _llm = None
 
 
@@ -11,31 +14,27 @@ def _ensure_model():
     global _llm
     if _llm is not None:
         return
-    # Prefer GPU for speed (n_gpu_layers=-1); fall back to CPU if no GPU.
-    for n_gpu in (-1, 0):
-        try:
-            _llm = Llama(
-                model_path=MODEL_PATH,
-                n_ctx=4096,
-                n_threads=8,
-                n_gpu_layers=n_gpu,
-                temperature=0.15,
-                repeat_penalty=1.1,
-                verbose=False,
-            )
-            print(f"✅ Llama loaded (n_gpu_layers={n_gpu})")
-            return
-        except Exception as e:
-            if n_gpu == -1:
-                print(f"⚠️ GPU load failed ({e}), falling back to CPU")
-                continue
-            raise
+    _llm = Llama(
+        model_path=MODEL_PATH,
+        n_ctx=4096,
+        n_threads=8,
+        n_gpu_layers=0,
+        temperature=0.15,
+        repeat_penalty=1.1,
+        verbose=False,
+    )
 
 
 def get_opening(role: str) -> str:
     return (
         f"Hi, I'm SnapAI, and I'll be interviewing you for the {role} position. "
         "Could you briefly introduce yourself?"
+    )
+
+
+def get_closing() -> str:
+    return (
+        "Thank you for interviewing with us. We wish you all the best!"
     )
 
 
@@ -62,7 +61,7 @@ def create_interview_session(role: str, difficulty: str) -> dict:
             ),
         },
     ]
-    return {"messages": messages}
+    return {"messages": messages, "question_count": 1, "max_questions": MAX_QUESTIONS}
 
 
 def generate_question(session: dict) -> str:
@@ -70,7 +69,7 @@ def generate_question(session: dict) -> str:
     messages = session["messages"].copy()
     output = _llm.create_chat_completion(
         messages=messages,
-        max_tokens=80,
+        max_tokens=120,
         temperature=0.15,
         repeat_penalty=1.1,
     )
@@ -80,11 +79,17 @@ def generate_question(session: dict) -> str:
     return text.strip()
 
 
-def add_response_and_generate(session: dict, candidate_text: str) -> str:
+def add_response_and_generate(session: dict, candidate_text: str):
     session["messages"].append(
         {"role": "user", "content": f"Candidate response: {candidate_text}"}
     )
-    return generate_question(session)
+    question_count = session.get("question_count", 1)
+    max_questions = session.get("max_questions", MAX_QUESTIONS)
+    if question_count >= max_questions:
+        return None
+    next_q = generate_question(session)
+    session["question_count"] = question_count + 1
+    return next_q
 
 
 def add_response(session: dict, candidate_text: str):

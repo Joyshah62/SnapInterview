@@ -40,22 +40,60 @@ class _SetupScreenState extends State<SetupScreen> {
   String? _selectedDifficulty;
   String? _resumeStatus;
   String? _jdStatus;
+  bool _resumeParsing = false;
+  bool _jdParsing = false;
+  String? _pendingResumeName;
+  String? _pendingJdName;
+  final List<String> _pendingUploadTypes = [];
+  StreamSubscription? _streamSubscription;
 
   @override
   void initState() {
     super.initState();
     _channel = widget.channel;
     _stream = widget.stream;
+    _streamSubscription = _stream.listen(_onStreamMessage);
+  }
+
+  @override
+  void dispose() {
+    _streamSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> _reconnect() async {
     final channel = WebSocketChannel.connect(Uri.parse(widget.wsUrl));
     final stream = channel.stream.asBroadcastStream();
     await stream.first;
-    if (mounted) setState(() {
+    if (!mounted) return;
+    _streamSubscription?.cancel();
+    _streamSubscription = stream.listen(_onStreamMessage);
+    setState(() {
       _channel = channel;
       _stream = stream;
     });
+  }
+
+  void _onStreamMessage(dynamic event) {
+    if (event is! String) return;
+    try {
+      final data = jsonDecode(event);
+      if (data["type"] == "document_upload_result" && _pendingUploadTypes.isNotEmpty) {
+        final type = _pendingUploadTypes.removeAt(0);
+        final success = data["success"] == true;
+        if (mounted) {
+          setState(() {
+            if (type == "resume") {
+              _resumeParsing = false;
+              _resumeStatus = success ? (_pendingResumeName ?? "Uploaded") : "Failed";
+            } else {
+              _jdParsing = false;
+              _jdStatus = success ? (_pendingJdName ?? "Uploaded") : "Failed";
+            }
+          });
+        }
+      }
+    } catch (_) {}
   }
 
   Future<void> _pickAndUpload(String docType) async {
@@ -71,18 +109,24 @@ class _SetupScreenState extends State<SetupScreen> {
     if (!mounted) return;
     await _reconnect();
     if (!mounted) return;
+    if (mounted) {
+      setState(() {
+        _pendingUploadTypes.add(docType);
+        if (docType == "resume") {
+          _resumeParsing = true;
+          _pendingResumeName = name;
+        } else {
+          _jdParsing = true;
+          _pendingJdName = name;
+        }
+      });
+    }
     _channel.sink.add(jsonEncode({
       "type": "document_upload",
       "doc_type": docType,
       "filename": name,
       "content": base64Content,
     }));
-    if (mounted) {
-      setState(() {
-        if (docType == "resume") _resumeStatus = name;
-        else _jdStatus = name;
-      });
-    }
   }
 
   void _sendAndContinue() {
@@ -122,7 +166,7 @@ class _SetupScreenState extends State<SetupScreen> {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () => _pickAndUpload("resume"),
+                    onPressed: _resumeParsing ? null : () => _pickAndUpload("resume"),
                     icon: const Icon(Icons.upload_file),
                     label: Text(_resumeStatus ?? "Upload Resume"),
                   ),
@@ -130,13 +174,19 @@ class _SetupScreenState extends State<SetupScreen> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () => _pickAndUpload("jd"),
+                    onPressed: _jdParsing ? null : () => _pickAndUpload("jd"),
                     icon: const Icon(Icons.upload_file),
                     label: Text(_jdStatus ?? "Upload JD"),
                   ),
                 ),
               ],
             ),
+            if (_resumeParsing || _jdParsing) ...[
+              const SizedBox(height: 12),
+              _FadingParsingText(
+                text: _resumeParsing ? "Parsing resume…" : "Parsing JD…",
+              ),
+            ],
             const SizedBox(height: 32),
             const Text(
               "Select Role",
@@ -199,6 +249,60 @@ class _SetupScreenState extends State<SetupScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Fading text shown while parsing (e.g. "Parsing resume…").
+class _FadingParsingText extends StatefulWidget {
+  final String text;
+
+  const _FadingParsingText({required this.text});
+
+  @override
+  State<_FadingParsingText> createState() => _FadingParsingTextState();
+}
+
+class _FadingParsingTextState extends State<_FadingParsingText>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1200),
+      vsync: this,
+    )..repeat(reverse: true);
+    _animation = Tween<double>(begin: 0.35, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        return Opacity(
+          opacity: _animation.value,
+          child: Text(
+            widget.text,
+            style: TextStyle(
+              fontSize: 14,
+              color: Theme.of(context).colorScheme.primary.withOpacity(0.9),
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        );
+      },
     );
   }
 }

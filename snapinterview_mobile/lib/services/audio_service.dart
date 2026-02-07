@@ -64,7 +64,11 @@ class AudioService {
   }
 
   /// Play interviewer TTS MP3 sent from server (base64-encoded). Works for opening and LLM follow-up questions.
-  static Future<void> playInterviewerAudio(String audioBase64) async {
+  /// [onPlaybackComplete] is called when this clip finishes (e.g. to navigate to analysis after closing message).
+  static Future<void> playInterviewerAudio(
+    String audioBase64, {
+    void Function()? onPlaybackComplete,
+  }) async {
     if (audioBase64.isEmpty) return;
     try {
       // Stop and close any current playback so we can play the new clip (opening or next question).
@@ -89,11 +93,13 @@ class AudioService {
           try {
             await file.delete();
           } catch (_) {}
+          onPlaybackComplete?.call();
         },
       );
       debugPrint("AudioService: playing interviewer audio");
     } catch (e) {
       debugPrint("AudioService: playInterviewerAudio error: $e");
+      onPlaybackComplete?.call();
     }
   }
 }

@@ -12,11 +12,12 @@ from resume_parser import parse_and_save
 from interview_engine import (
     create_interview_session,
     get_opening,
+    get_closing,
     generate_question,
     add_response_and_generate,
 )
 from whisper_stt import transcribe_from_pcm16_bytes, transcribe_pcm16_chunk, merge_transcripts, CHUNK_BYTES, OVERLAP_BYTES
-from text_to_speech import synthesize_opening_mp3, synthesize_question_mp3
+from text_to_speech import synthesize_opening_mp3, synthesize_question_mp3, synthesize_closing_mp3
 
 def get_free_port():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -155,10 +156,7 @@ class WebSocketServer:
                                 loop = asyncio.get_event_loop()
                                 live_parts = list(self.live_transcript_parts)
                                 def do_transcribe_and_next():
-                                    t0 = time.perf_counter()
                                     remainder_text = transcribe_pcm16_chunk(remainder_bytes) if remainder_bytes else ""
-                                    t1 = time.perf_counter()
-                                    print(f"⏱ Transcribe remainder: {t1 - t0:.1f}s")
                                     full_text = ""
                                     for t in live_parts + ([remainder_text] if remainder_text else []):
                                         full_text = merge_transcripts(full_text, t)
@@ -170,8 +168,6 @@ class WebSocketServer:
                                         self.interview_sessions[session_key],
                                         full_text.strip(),
                                     )
-                                    t2 = time.perf_counter()
-                                    print(f"⏱ LLM generate: {t2 - t1:.1f}s | total: {t2 - t0:.1f}s")
                                     return full_text.strip(), next_q, remainder_text
                                 try:
                                     transcript, next_question, remainder_text = await loop.run_in_executor(None, do_transcribe_and_next)
@@ -200,6 +196,28 @@ class WebSocketServer:
                                             print("✅ Sent interviewer_audio for LLM question")
                                         except Exception as tts_ex:
                                             print(f"❌ TTS for follow-up question failed: {tts_ex}")
+                                    else:
+                                        # Max questions reached: send closing message (heard) then interview_complete
+                                        closing_text = get_closing()
+                                        await websocket.send(json.dumps({
+                                            "type": "interviewer_text",
+                                            "text": closing_text,
+                                        }))
+                                        try:
+                                            loop = asyncio.get_event_loop()
+                                            mp3_bytes = await loop.run_in_executor(
+                                                None, lambda: synthesize_closing_mp3(closing_text)
+                                            )
+                                            await websocket.send(json.dumps({
+                                                "type": "interviewer_audio",
+                                                "audio_base64": base64.b64encode(mp3_bytes).decode("ascii"),
+                                                "text": closing_text,
+                                            }))
+                                            print("✅ Sent closing message (TTS)")
+                                        except Exception as tts_ex:
+                                            print(f"❌ TTS for closing failed: {tts_ex}")
+                                        await websocket.send(json.dumps({"type": "interview_complete"}))
+                                        print("✅ Interview complete (max questions reached)")
                                 except Exception as ex:
                                     print(f"Interview step error: {ex}")
                     

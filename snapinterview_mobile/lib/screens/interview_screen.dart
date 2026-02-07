@@ -5,6 +5,7 @@ import 'package:camera/camera.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../services/audio_service.dart';
+import 'analysis_screen.dart';
 
 class InterviewScreen extends StatefulWidget {
   final WebSocketChannel channel;
@@ -20,10 +21,20 @@ class _InterviewScreenState extends State<InterviewScreen> {
   String liveSpeech = "";
   String finalTranscript = "";
   String interviewerTranscript = "";
+  bool _navigateToAnalysisWhenDone = false;
   StreamSubscription? _wsSubscription;
 
   CameraController? _cameraController;
   bool cameraReady = false;
+
+  void _onPlaybackComplete() {
+    if (!mounted) return;
+    if (_navigateToAnalysisWhenDone) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const AnalysisScreen()),
+      );
+    }
+  }
 
   @override
   void initState() {
@@ -34,18 +45,18 @@ class _InterviewScreenState extends State<InterviewScreen> {
           final data = jsonDecode(event);
           if (!mounted) return;
           if (data["type"] == "interviewer_text" && data["text"] != null) {
-            setState(() {
-              interviewerTranscript = interviewerTranscript.isEmpty
-                  ? data["text"] as String
-                  : "$interviewerTranscript\n\n${data["text"]}";
-            });
+            setState(() => interviewerTranscript = data["text"] as String);
           } else if (data["type"] == "interviewer_audio" && data["audio_base64"] != null) {
-            // Only play audio; text is already shown from interviewer_text (avoid duplicate)
-            AudioService.playInterviewerAudio(data["audio_base64"] as String);
+            AudioService.playInterviewerAudio(
+              data["audio_base64"] as String,
+              onPlaybackComplete: _onPlaybackComplete,
+            );
+          } else if (data["type"] == "interview_complete") {
+            setState(() => _navigateToAnalysisWhenDone = true);
           } else if (data["type"] == "candidate_transcript" && data["text"] != null) {
             setState(() {
               finalTranscript = finalTranscript.isEmpty
-                  ? data["text"] as String
+                  ? (data["text"] as String)
                   : "$finalTranscript ${data["text"]}";
             });
           }
@@ -242,28 +253,31 @@ class _InterviewScreenState extends State<InterviewScreen> {
                         style: TextStyle(fontSize: 14, color: Colors.greenAccent),
                       ),
                     ),
-                  Text(
-                    liveSpeech.isEmpty ? "…" : liveSpeech,
-                    style: const TextStyle(fontSize: 16, fontStyle: FontStyle.italic),
-                  ),
                   const Divider(height: 24),
-                  if (interviewerTranscript.isNotEmpty) ...[
-                    const Text(
-                      "Interviewer",
-                      style: TextStyle(fontSize: 14, color: Colors.white70),
-                    ),
-                    const SizedBox(height: 6),
-                    Expanded(
-                      flex: 1,
+                  const Text(
+                    "Interviewer",
+                    style: TextStyle(fontSize: 14, color: Colors.white70),
+                  ),
+                  const SizedBox(height: 6),
+                  Expanded(
+                    flex: 1,
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade900,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      alignment: Alignment.topLeft,
                       child: SingleChildScrollView(
                         child: Text(
-                          interviewerTranscript,
+                          interviewerTranscript.isEmpty ? "—" : interviewerTranscript,
                           style: const TextStyle(fontSize: 16),
                         ),
                       ),
                     ),
-                    const Divider(height: 24),
-                  ],
+                  ),
+                  const Divider(height: 24),
                   const Text(
                     "Transcript",
                     style: TextStyle(fontSize: 14, color: Colors.white70),
@@ -271,10 +285,19 @@ class _InterviewScreenState extends State<InterviewScreen> {
                   const SizedBox(height: 6),
                   Expanded(
                     flex: 1,
-                    child: SingleChildScrollView(
-                      child: Text(
-                        finalTranscript.isEmpty ? "Waiting for input..." : finalTranscript,
-                        style: const TextStyle(fontSize: 16),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade900,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      alignment: Alignment.topLeft,
+                      child: SingleChildScrollView(
+                        child: Text(
+                          finalTranscript.isEmpty ? "Waiting for input..." : finalTranscript,
+                          style: const TextStyle(fontSize: 16),
+                        ),
                       ),
                     ),
                   ),

@@ -27,8 +27,7 @@ stop_recording = threading.Event()
 # ==========================
 # LOAD MODELS
 # ==========================
-# "tiny" is faster (~2–4x); use "base" or "small" for better accuracy.
-whisper_model = whisper.load_model("tiny", device=DEVICE)
+whisper_model = whisper.load_model("base", device=DEVICE)
 vad_model = load_silero_vad()
 _whisper_lock = threading.Lock()
 
