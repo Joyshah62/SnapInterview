@@ -39,6 +39,9 @@ class _InterviewScreenState extends State<InterviewScreen> {
                   ? data["text"] as String
                   : "$interviewerTranscript\n\n${data["text"]}";
             });
+          } else if (data["type"] == "interviewer_audio" && data["audio_base64"] != null) {
+            // Only play audio; text is already shown from interviewer_text (avoid duplicate)
+            AudioService.playInterviewerAudio(data["audio_base64"] as String);
           } else if (data["type"] == "candidate_transcript" && data["text"] != null) {
             setState(() {
               finalTranscript = finalTranscript.isEmpty
@@ -82,6 +85,8 @@ class _InterviewScreenState extends State<InterviewScreen> {
       AudioService.stop();
       widget.channel.sink.add(jsonEncode({"type": "stop_audio"}));
     }
+    // Stop any playing interviewer TTS so it doesn't continue after leaving
+    AudioService.stopPlayback();
 
     widget.channel.sink.add(jsonEncode({"type": "end_interview"}));
 

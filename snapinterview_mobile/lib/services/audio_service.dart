@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_sound/flutter_sound.dart';
@@ -7,6 +9,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 class AudioService {
   static final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
+  static final FlutterSoundPlayer _player = FlutterSoundPlayer();
   static StreamController<Uint8List>? _audioStream;
   static bool _isRunning = false;
 
@@ -47,5 +50,50 @@ class AudioService {
     _audioStream = null;
 
     debugPrint("AudioService: stopped");
+  }
+
+  /// Stop and close interviewer TTS playback (e.g. when ending interview).
+  static Future<void> stopPlayback() async {
+    try {
+      await _player.stopPlayer();
+    } catch (_) {}
+    try {
+      await _player.closePlayer();
+    } catch (_) {}
+    debugPrint("AudioService: playback stopped");
+  }
+
+  /// Play interviewer TTS MP3 sent from server (base64-encoded). Works for opening and LLM follow-up questions.
+  static Future<void> playInterviewerAudio(String audioBase64) async {
+    if (audioBase64.isEmpty) return;
+    try {
+      // Stop and close any current playback so we can play the new clip (opening or next question).
+      try {
+        await _player.stopPlayer();
+      } catch (_) {}
+      try {
+        await _player.closePlayer();
+      } catch (_) {}
+      final bytes = base64Decode(audioBase64);
+      final dir = Directory.systemTemp;
+      final path = '${dir.path}/interviewer_${DateTime.now().millisecondsSinceEpoch}.mp3';
+      final file = File(path);
+      await file.writeAsBytes(bytes);
+      await _player.openPlayer();
+      await _player.startPlayer(
+        fromURI: path,
+        whenFinished: () async {
+          try {
+            await _player.closePlayer();
+          } catch (_) {}
+          try {
+            await file.delete();
+          } catch (_) {}
+        },
+      );
+      debugPrint("AudioService: playing interviewer audio");
+    } catch (e) {
+      debugPrint("AudioService: playInterviewerAudio error: $e");
+    }
   }
 }
