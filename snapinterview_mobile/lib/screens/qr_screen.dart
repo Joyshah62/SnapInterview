@@ -36,7 +36,7 @@ class _QRScreenState extends State<QRScreen> {
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(
-              builder: (_) => SetupScreen(channel: channel),
+              builder: (_) => SetupScreen(channel: channel, wsUrl: wsUrl),
             ),
           );
         }
